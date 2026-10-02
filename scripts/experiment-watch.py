@@ -409,14 +409,29 @@ def _get_log_dir() -> str:
     return f"/tmp/exp-{project}"
 
 
+def usage() -> str:
+    return (
+        f"{BOLD}Usage:{RESET} experiment.sh watch [phase|logfile] [--resolve] [--verbose]\n"
+        "\n"
+        "  phase        one of: survey, frame, run, read, log  (default: most recent log)\n"
+        "  logfile      explicit path to a stream-json log\n"
+        "  --resolve    one-shot summary instead of live tail (alias: --summary)\n"
+        "  --verbose    show tool result output (alias: -v)\n"
+        "  --help       show this message\n"
+        "\n"
+        f"Logs are read from $EXP_LOG_DIR (currently: {_get_log_dir()}).\n"
+        "Start a phase first:  ./experiment.sh survey \"your question\""
+    )
+
+
 def find_log_file() -> str:
     """Auto-detect the most recent *.log in the project log directory."""
     log_dir = _get_log_dir()
     candidates = glob.glob(f"{log_dir}/*.log")
     if not candidates:
-        print(f"{RED}No log files found in {log_dir}/{RESET}")
-        print(f"Start a phase first:  ./experiment.sh survey \"your question\"")
-        sys.exit(1)
+        print(f"{YELLOW}No log files found in {log_dir}/ -- nothing to watch yet.{RESET}\n")
+        print(usage())
+        sys.exit(0)
     best = max(candidates, key=os.path.getmtime)
     return best
 
@@ -506,6 +521,9 @@ def main():
     signal.signal(signal.SIGINT, lambda *_: (print(f"\n{RESET}"), sys.exit(0)))
 
     args = sys.argv[1:]
+    if "-h" in args or "--help" in args:
+        print(usage())
+        sys.exit(0)
     resolve_mode = "--resolve" in args or "--summary" in args
     verbose_mode = "--verbose" in args or "-v" in args
     args = [a for a in args if not a.startswith("-")]
@@ -513,6 +531,10 @@ def main():
     if args and args[0] in PHASES:
         log_dir = _get_log_dir()
         filepath = f"{log_dir}/{args[0]}.log"
+        if not os.path.exists(filepath):
+            print(f"{YELLOW}No {args[0]} log yet at {filepath} -- nothing to watch.{RESET}\n")
+            print(usage())
+            sys.exit(0)
     elif args:
         filepath = args[0]
     else:

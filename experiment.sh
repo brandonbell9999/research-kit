@@ -9,7 +9,13 @@
 #   ./experiment.sh log     <spec-file>         # Commit results, update research log
 #   ./experiment.sh cycle   <spec-file>         # Run frame -> run -> read -> log
 #   ./experiment.sh full    <question> <spec>    # Run survey -> frame -> run -> read -> log
+#   ./experiment.sh status                       # Show research program status (questions, results, budget)
+#   ./experiment.sh program [--max-cycles N] [--dry-run]   # Auto-advance through open questions
+#   ./experiment.sh synthesize [reason]          # Generate cumulative SYNTHESIS.md report
+#   ./experiment.sh complete-handoff [file]      # Validate + archive HANDOFF.md to handoffs/completed/
+#   ./experiment.sh validate-handoff [file]      # Check a handoff document for required sections
 #   ./experiment.sh watch   [phase] [--resolve]  # Live-tail or summarize a phase log
+#   ./experiment.sh help                         # Print usage
 #
 # Configure via environment variables or edit the defaults below.
 
@@ -203,6 +209,16 @@ run_status() {
         break
       fi
       if $in_section && [[ "$line" =~ ^\|\ *P[0-9] ]]; then
+        # Apply the same placeholder filter as select_next_question so the
+        # counts match what `program` will actually pick up.
+        local q_text
+        q_text="$(printf '%s' "$line" | awk -F'|' '{print $3}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        if [[ "$q_text" == -* || "$q_text" == "Question" ]]; then
+          continue
+        fi
+        if [[ "$q_text" == _*_ ]]; then
+          continue   # template placeholder row, e.g. _Most important question_
+        fi
         q_total=$((q_total + 1))
         if echo "$line" | grep -qi "not started"; then
           q_not_started=$((q_not_started + 1))
@@ -335,6 +351,7 @@ run_survey() {
   local exit_code=0
   claude \
     --output-format stream-json \
+    --verbose \
     --append-system-prompt "$(cat "$PROMPT_DIR/survey.md")
 
 ## Context
@@ -380,6 +397,7 @@ run_frame() {
   local exit_code=0
   claude \
     --output-format stream-json \
+    --verbose \
     --append-system-prompt "$(cat "$PROMPT_DIR/frame.md")
 
 ## Context
@@ -442,6 +460,7 @@ run_run() {
   local exit_code=0
   claude \
     --output-format stream-json \
+    --verbose \
     --append-system-prompt "$(cat "$PROMPT_DIR/run.md")
 
 ## Context
@@ -502,6 +521,7 @@ run_read() {
   local exit_code=0
   claude \
     --output-format stream-json \
+    --verbose \
     --append-system-prompt "$(cat "$PROMPT_DIR/read.md")
 
 ## Context
@@ -674,6 +694,7 @@ run_synthesize() {
   local exit_code=0
   claude \
     --output-format stream-json \
+    --verbose \
     --append-system-prompt "$(cat "$PROMPT_DIR/synthesize.md")
 
 ## Context
@@ -1120,7 +1141,9 @@ case "${1:-help}" in
     echo "  status                             Show research program status"
     echo "  program     [--max-cycles N] [--dry-run]  Auto-advance through research questions"
     echo "  synthesize  [reason]               Generate synthesis report"
-    echo "  watch       [phase]                Live-tail a running phase (--resolve for summary)"
+    echo "  complete-handoff [file]            Validate and archive HANDOFF.md to handoffs/completed/"
+    echo "  validate-handoff [file]            Check a handoff document for required sections"
+    echo "  watch       [phase]                Live-tail a running phase (--resolve for summary, --help for usage)"
     echo ""
     echo "Environment:"
     echo "  SRC_DIR='src'                  Source / model code directory"

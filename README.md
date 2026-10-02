@@ -1,6 +1,6 @@
 # Claude Research Kit
 
-A drop-in experiment workflow for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Five separate AI agents — a surveyor, experiment designer, executor, analyst, and logger — each with enforced guardrails that prevent them from stepping outside their role.
+A drop-in experiment workflow for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Five separate AI agents — a surveyor (`survey`), experiment designer (`frame`), executor (`run`), analyst (`read`), and synthesist (`synthesize`) — each with its own system prompt in `.claude/prompts/` and enforced guardrails that prevent it from stepping outside its role. A sixth step, `log`, is plain shell (commit + PR) with no agent.
 
 Inspired by [claude-tdd-kit](https://github.com/kurtbell87/claude-tdd-kit). Same defense-in-depth philosophy, adapted for ML/DL research where the discipline problem isn't "modifying the tests" but "moving the goalposts after seeing results."
 
@@ -25,7 +25,7 @@ Or auto-advance:   ──► experiment.sh program      ──► Loops through 
 |-------|-----------|-----------------|
 | **System prompt** | Phase-specific agent identity | Agent "wants" to stay in role |
 | **File permissions** | `chmod 444` on specs/metrics | OS blocks writes even if agent tries |
-| **Pre-tool-use hook** | Blocks `chmod`, `git restore`, spec edits | Prevents workarounds to bypass permissions |
+| **Pre-tool-use hook** | Blocks `chmod`, `git restore`, `install` commands, spec edits | Prevents workarounds to bypass permissions |
 
 ### What It Prevents (Confirmation Bias Guardrails)
 
@@ -96,7 +96,9 @@ Each `./experiment.sh` phase returns **only** a compact summary on stdout:
 
 This is intentional — it prevents sub-agent verbosity from flooding the orchestrator's context window. The orchestrator should treat the summary as the primary signal and only pull from the log when diagnosing a failure.
 
-## The Five Phases
+## The Six Phases
+
+Five of these phases spawn a dedicated Claude agent (SURVEY, FRAME, RUN, READ, SYNTHESIZE). LOG is a scripted git/PR step with no agent.
 
 ### SURVEY — "What do we already know?"
 
@@ -150,7 +152,7 @@ Verdict options:
 
 ### LOG — "Record what happened"
 
-Commits results, creates a PR, updates the research log.
+No agent. A shell step that commits results, creates a PR via `gh`, and records the cycle in the research log.
 
 ### SYNTHESIZE — "What did we learn overall?"
 
@@ -222,10 +224,9 @@ your-project/
 │   └── experiment-watch.py              # Live dashboard for monitoring phases
 ├── templates/
 │   ├── experiment-spec.md               # Template for experiment specs
-│   ├── HANDOFF.md                       # Template for handoff documents
-│   └── DOMAIN_PRIORS.md                 # Template for domain knowledge injection
+│   └── HANDOFF.md                       # Template for handoff documents
 └── .claude/
-    ├── settings.json                    # Hook registration
+    ├── settings.json                    # Hook registration + Bash permission (see Requirements)
     ├── hooks/
     │   └── pre-tool-use.sh              # Phase enforcement hook
     └── prompts/
@@ -315,8 +316,19 @@ The `## Context` section is appended dynamically by `experiment.sh` at runtime �
 
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
 - [GitHub CLI](https://cli.github.com/) (`gh`) for the LOG phase
-- Bash 4+
+- [`jq`](https://jqlang.github.io/jq/) — the pre-tool-use hook parses Claude Code's JSON hook payload with it. If `jq` is missing the hook prints a warning and allows the call (enforcement is silently off), so install it.
+- `python3` (3.9+) — used by `watch`, `status`/`program` question parsing, and budget tracking
+- Bash 3.2+ — the scripts avoid bash-4-only features, so the stock macOS `/bin/bash` works
 - Your ML training infrastructure already set up
+
+### Permissions and the hook
+
+`.claude/settings.json` (installed into your project) does two things:
+
+1. Registers `.claude/hooks/pre-tool-use.sh` as a `PreToolUse` hook for `Edit|Write|MultiEdit|Bash`.
+2. Sets `"permissions": { "allow": ["Bash"] }`. This lets the phase agents run shell commands (training, tests, git) **without interactive permission prompts**, which is what makes unattended `cycle`/`program` runs possible. It also means the agents can run any shell command the hook does not block; the hook is the guardrail. If you want tighter control, narrow the allow list (e.g. `"Bash(python *)"`, `"Bash(git *)"`) at the cost of prompts during phases.
+
+During the enforced phases (RUN, READ, SYNTHESIZE) the hook blocks, in addition to spec/metrics edits, any shell command matching `chmod`, `chown`, `sudo`, `doas`, `install ` (so `pip install`, `uv pip install`, `npm install`, `apt install`, ...) and `uv add`. New dependencies are deliberately out of scope once the spec is frozen: a RUN agent that installs packages mid-experiment changes the environment the spec was written against and makes results non-reproducible. Add dependencies before `run`, or raise a handoff and address them between cycles.
 
 ## Troubleshooting
 
@@ -331,6 +343,8 @@ find results/ -type f -exec chmod 644 {} \;
 **Hook isn't firing:**
 - Check `.claude/settings.json` exists and has the PreToolUse hook registered
 - Run `chmod +x .claude/hooks/pre-tool-use.sh`
+- Make sure `jq` is installed (`which jq`); without it the hook warns and allows every call
+- Self-test: `bash tests/hook_test.sh` (from the kit checkout) pipes sample payloads through the hook and checks the allow/block exit codes
 
 **Agent tries to modify the spec during RUN and gets blocked:**
 - This is expected! The RUN agent should see the block message and proceed with implementation. If it keeps retrying, the prompt may need strengthening for your use case.

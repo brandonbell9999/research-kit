@@ -1,10 +1,6 @@
 # Local Claude Code settings
 .claude/settings.local.json
 
-# Reference / working files
-inspiration_conversation.md
-claude-research-kit-README.md
-
 # OS
 .DS_Store
 
